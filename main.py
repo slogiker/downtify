@@ -138,6 +138,7 @@ from downtify.playlist_spotify_cache import (
     playlist_spotify_cache_loop,
 )
 from downtify.podcasts import PodcastStore
+from downtify.playback_sessions import JamStore, PlaybackStateStore
 from downtify.proxy_config import configure_outbound_proxy
 from downtify.server_identity import ServerIdentity
 from downtify.server_port import (
@@ -487,6 +488,9 @@ def _open_library_stores(monitor_db_path: Path | Database) -> None:
     # Each file's upload, and uploads rejected per song (issue #582).
     api.state.download_sources = DownloadSources(library_db)
     api.state.podcasts = PodcastStore(library_db)
+    # What each device plays (the handoff) and the jam a group shares.
+    api.state.playback_store = PlaybackStateStore(library_db)
+    api.state.jam_store = JamStore(library_db)
     # The music trash (downtify/library_trash.py), when the operator
     # turned it on. A configuration that doesn't load stops the server:
     # carrying on would quietly bring permanent deletion back.

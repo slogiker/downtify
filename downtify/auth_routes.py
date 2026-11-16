@@ -163,6 +163,8 @@ def get_server_info() -> dict[str, Any]:
     result['library_only'] = api.state.settings.get('library_only') is True
     result['capabilities']['playlist_editing'] = True
     result['capabilities']['playlist_delete'] = True
+    result['capabilities']['playback_handoff'] = True
+    result['capabilities']['jam'] = True
     return result
 
 
