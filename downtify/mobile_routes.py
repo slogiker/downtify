@@ -939,3 +939,278 @@ async def _edit_metadata(
         await asyncio.to_thread(_refresh)
         api.announce_library_changed()
     return results
+
+
+# ── playback: what a device plays, the handoff, and jam sessions ─────────
+
+
+def _playback_stores():
+    """The two stores, or ``503`` while the server is still starting."""
+
+    playback = getattr(api.state, 'playback_store', None)
+    jam = getattr(api.state, 'jam_store', None)
+    if playback is None or jam is None:
+        raise HTTPException(status_code=503, detail='Starting up')
+    return playback, jam
+
+
+def _playback_identity(request: Request) -> tuple[int, str, str]:
+    """``(user_id, device_id, username)`` of a signed-in caller."""
+
+    principal = api.principal_of(request)
+    user_id = api.request_user_id(request)
+    if principal is None or not user_id:
+        raise HTTPException(status_code=401, detail='Sign in required')
+    return user_id, principal.device_id or '', principal.username or ''
+
+
+def _device_name(device_id: str) -> str:
+    auth = getattr(api.state, 'auth', None)
+    if auth is None or not device_id:
+        return ''
+    device = auth.get_device(device_id) or {}
+    return str(device.get('name') or '')
+
+
+def _jam_payload(
+    session: dict[str, Any], user_id: int, device_id: str, jam
+) -> dict[str, Any]:
+    """A session as a phone needs it: members by device, plus the state."""
+
+    members = [
+        {
+            'device_id': member['device_id'],
+            'device_name': _device_name(member['device_id']),
+            'me': (
+                int(member['user_id']) == int(user_id)
+                and member['device_id'] == (device_id or '')
+            ),
+        }
+        for member in jam.members(session['id'])
+    ]
+    return {
+        'id': session['id'],
+        'code': session['code'],
+        'owner': int(session['owner_user_id']) == int(user_id),
+        'created_at': session['created_at'],
+        'members': members,
+        'state': jam.state(session['id']),
+    }
+
+
+async def _broadcast_jam(session: dict[str, Any], message: dict[str, Any]) -> None:
+    """Send *message* to every member of the session, once per account."""
+
+    connections = api.state.connections
+    if connections is None:
+        return
+    seen: set[int] = set()
+    for member in api.state.jam_store.members(session['id']):
+        uid = int(member['user_id'])
+        if uid in seen:
+            continue
+        seen.add(uid)
+        await connections.send_user(uid, message)
+
+
+@router.post('/playback/state')
+async def report_playback_state(request: Request) -> dict[str, Any]:
+    """Remember what this device plays (``{track_id, position, playing,
+    queue?}``) - what the handoff on another device reads back.
+
+    Unlike the admin dashboard's live view this never expires: it is the
+    "you were at 2:41 on the other phone" a client offers later.
+    """
+
+    playback, _ = _playback_stores()
+    user_id, device_id, _ = _playback_identity(request)
+    payload = await api._json_object(request)
+    track_id = payload.get('track_id')
+    if track_id is not None and not isinstance(track_id, str):
+        raise HTTPException(status_code=400, detail='track_id must be a string')
+    position = payload.get('position', 0)
+    if not isinstance(position, (int, float)) or isinstance(position, bool):
+        raise HTTPException(
+            status_code=400, detail='position must be a number'
+        )
+    playing = payload.get('playing', False)
+    if not isinstance(playing, bool):
+        raise HTTPException(status_code=400, detail='playing must be a boolean')
+    queue = payload.get('queue')
+    if queue is not None and not isinstance(queue, list):
+        raise HTTPException(status_code=400, detail='queue must be a list')
+    row = await asyncio.to_thread(
+        playback.report,
+        user_id,
+        device_id,
+        track_id=track_id or '',
+        position=position,
+        playing=playing,
+        queue=queue,
+    )
+    return {'stored': True, 'state': row}
+
+
+@router.get('/playback/handoff')
+async def playback_handoff(request: Request) -> dict[str, Any]:
+    """The last thing each of this account's *other* devices played.
+
+    Answer ``{devices: [...]}``, newest first and each with the device's
+    name; an empty list is a phone that has only ever played here.
+    """
+
+    playback, _ = _playback_stores()
+    user_id, device_id, _ = _playback_identity(request)
+    rows = await asyncio.to_thread(
+        playback.devices, user_id, exclude_device=device_id
+    )
+    for row in rows:
+        row['device_name'] = _device_name(row['device_id'])
+    return {'devices': rows}
+
+
+@router.post('/playback/jam')
+async def start_jam(request: Request) -> dict[str, Any]:
+    """Start a session this device hosts; answers it with its six-letter code."""
+
+    _, jam = _playback_stores()
+    user_id, device_id, _ = _playback_identity(request)
+    current = await asyncio.to_thread(jam.session_for_user, user_id)
+    if current is not None:
+        return _jam_payload(current, user_id, device_id, jam)
+    session = await asyncio.to_thread(jam.create, user_id, device_id)
+    payload = _jam_payload(session, user_id, device_id, jam)
+    await _broadcast_jam(session, {'type': 'jam_members', 'session': payload})
+    return payload
+
+
+@router.post('/playback/jam/join')
+async def join_jam(request: Request) -> dict[str, Any]:
+    """Join a session by its code (``{code}``); answers the session."""
+
+    _, jam = _playback_stores()
+    user_id, device_id, _ = _playback_identity(request)
+    payload = await api._json_object(request)
+    code = payload.get('code')
+    if not isinstance(code, str) or not code.strip():
+        raise HTTPException(status_code=400, detail='code is required')
+    session = await asyncio.to_thread(jam.by_code, code)
+    if session is None:
+        raise HTTPException(
+            status_code=404, detail='No jam with that code'
+        )
+    session = await asyncio.to_thread(jam.join, session['id'], user_id, device_id)
+    result = _jam_payload(session, user_id, device_id, jam)
+    await _broadcast_jam(session, {'type': 'jam_members', 'session': result})
+    return result
+
+
+@router.get('/playback/jam')
+async def current_jam(request: Request) -> dict[str, Any]:
+    """The session this account is in (``{session}``, null when none)."""
+
+    _, jam = _playback_stores()
+    user_id, device_id, _ = _playback_identity(request)
+    session = await asyncio.to_thread(jam.session_for_user, user_id)
+    if session is None:
+        return {'session': None}
+    return {'session': _jam_payload(session, user_id, device_id, jam)}
+
+
+@router.put('/playback/jam/state')
+async def publish_jam_state(request: Request) -> dict[str, Any]:
+    """Write the shared state (``{track_id, position, playing, queue?,
+    revision?}``) and broadcast it.
+
+    *revision* is the state the caller acted on. A stale one answers
+    ``409`` with the current state in ``detail`` - the client applies it
+    and retries, so two phones converge instead of fighting.
+    """
+
+    playback, jam = _playback_stores()
+    user_id, device_id, _ = _playback_identity(request)
+    session = await asyncio.to_thread(jam.session_for_user, user_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail='Not in a jam')
+    payload = await api._json_object(request)
+    track_id = payload.get('track_id', '')
+    if not isinstance(track_id, str):
+        raise HTTPException(status_code=400, detail='track_id must be a string')
+    position = payload.get('position', 0)
+    if not isinstance(position, (int, float)) or isinstance(position, bool):
+        raise HTTPException(
+            status_code=400, detail='position must be a number'
+        )
+    playing = payload.get('playing', False)
+    if not isinstance(playing, bool):
+        raise HTTPException(status_code=400, detail='playing must be a boolean')
+    revision = payload.get('revision')
+    if revision is not None and (
+        not isinstance(revision, int) or isinstance(revision, bool)
+    ):
+        raise HTTPException(
+            status_code=400, detail='revision must be an integer'
+        )
+    queue = payload.get('queue')
+    if queue is not None and not isinstance(queue, list):
+        raise HTTPException(status_code=400, detail='queue must be a list')
+    state, applied = await asyncio.to_thread(
+        jam.publish,
+        session['id'],
+        user_id,
+        device_id,
+        track_id=track_id,
+        position=position,
+        playing=playing,
+        queue=queue,
+        expected_revision=revision,
+        queue_supplied=queue is not None,
+    )
+    if not applied:
+        raise HTTPException(
+            status_code=409,
+            detail={'error': 'stale revision', 'state': state},
+        )
+    # The publisher's own device reports too, so the handoff knows it.
+    await asyncio.to_thread(
+        playback.report,
+        user_id,
+        device_id,
+        track_id=track_id,
+        position=position,
+        playing=playing,
+        queue=queue,
+    )
+    await _broadcast_jam(
+        session,
+        {
+            'type': 'jam_state',
+            'session_id': session['id'],
+            'state': state,
+            'by_device_id': device_id,
+            'by_user_id': user_id,
+        },
+    )
+    return {'state': state}
+
+
+@router.delete('/playback/jam')
+async def leave_jam(request: Request) -> dict[str, Any]:
+    """Leave the session (the host leaving ends it for everyone)."""
+
+    _, jam = _playback_stores()
+    user_id, device_id, _ = _playback_identity(request)
+    session = await asyncio.to_thread(jam.session_for_user, user_id)
+    if session is None:
+        return {'ended': False, 'session': None}
+    ended = await asyncio.to_thread(jam.leave, session['id'], user_id, device_id)
+    payload = None
+    if not ended:
+        refreshed = await asyncio.to_thread(jam.session, session['id'])
+        if refreshed is not None:
+            payload = _jam_payload(refreshed, user_id, device_id, jam)
+    await _broadcast_jam(
+        session,
+        {'type': 'jam_ended' if ended else 'jam_members', 'session': payload},
+    )
+    return {'ended': ended, 'session': payload}

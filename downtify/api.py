@@ -1273,6 +1273,10 @@ class AppState:
     hand_replaced: Any = None
     external_sync: Optional[ExternalSyncJob] = None
     likes: Optional[LikedTracks] = None
+    # What each device plays, for the cross-device handoff, and the shared
+    # playback sessions (downtify/playback_sessions.py).
+    playback_store: Any = None
+    jam_store: Any = None
     track_owners: Optional[TrackOwners] = None
     library_visibility: Optional[LibraryVisibility] = None
     manual_playlist_owners: Optional[ManualPlaylistOwners] = None
