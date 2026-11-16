@@ -1383,6 +1383,8 @@ class AppState:
     # playback sessions (downtify/playback_sessions.py).
     playback_store: Any = None
     jam_store: Any = None
+    # Error reports from beta builds (downtify/beta_reports.py).
+    beta_reports: Any = None
     track_owners: Optional[TrackOwners] = None
     library_visibility: Optional[LibraryVisibility] = None
     manual_playlist_owners: Optional[ManualPlaylistOwners] = None

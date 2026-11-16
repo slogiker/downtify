@@ -1000,6 +1000,10 @@ RULES: list[tuple[frozenset[str], re.Pattern[str], str]] = [
         # The Doctor's AI helper: an assistant has no account; the
         # endpoint checks the helper's own key (downtify/doctor_ai.py).
         (_m('GET', 'POST', 'DELETE'), r'^/api/doctor/ai/mcp$', PUBLIC),
+        # A beta build's error report: a crash during pairing is exactly what
+        # nobody sends by hand, so this is open (capped and rate-limited in
+        # downtify/beta_routes.py). Reading them is the admin's business.
+        (_m('POST'), r'^/api/beta/reports$', PUBLIC),
         # Any signed-in user: their own account, devices and pairing
         # (the routes check whose), and a WebSocket ticket.
         (_m('POST'), r'^/api/auth/ws-ticket$', CLIENT),
@@ -1050,6 +1054,7 @@ RULES: list[tuple[frozenset[str], re.Pattern[str], str]] = [
         (_ALL, r'^/api/settings', ADMIN),
         (_ALL, r'^/api/backups(/.*)?$', ADMIN),
         (_ALL, r'^/api/notifications(/.*)?$', ADMIN),
+        (_ALL, r'^/api/beta/reports$', ADMIN),
         (_READ, r'^/api/fs/dirs$', ADMIN),
         (_ALL, r'^/api/cookies(/check)?$', ADMIN),
         (_ALL, r'^/api/(slskd|navidrome|deemix)/test$', ADMIN),

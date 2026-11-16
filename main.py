@@ -50,6 +50,7 @@ from downtify import (
 )
 from downtify.activity import ActivityLog
 from downtify.auth import AuthMiddleware, AuthStore, auth_disabled_from_env
+from downtify.beta_reports import BetaReportStore
 from downtify.catalog_worker import start_catalog_worker
 from downtify.compilation import CompilationMarks
 from downtify.cookie_refresh import bind_store as bind_cookie_store
@@ -109,6 +110,7 @@ from downtify.library_trash import trash_from_env
 from downtify.library_upgrade import LibraryUpgradeRunner, UpgradeDeps
 from downtify.library_upgrade_db import LibraryUpgradeDB
 from downtify.library_usage import UsageSnapshots
+from downtify import beta_routes
 from downtify.library_visibility import LibraryVisibility
 from downtify.likes import LikedTracks
 from downtify.loudness import LoudnessAnalyzer
@@ -137,8 +139,8 @@ from downtify.playlist_spotify_cache import (
     PlaylistSpotifyCache,
     playlist_spotify_cache_loop,
 )
-from downtify.podcasts import PodcastStore
 from downtify.playback_sessions import JamStore, PlaybackStateStore
+from downtify.podcasts import PodcastStore
 from downtify.proxy_config import configure_outbound_proxy
 from downtify.server_identity import ServerIdentity
 from downtify.server_port import (
@@ -491,6 +493,8 @@ def _open_library_stores(monitor_db_path: Path | Database) -> None:
     # What each device plays (the handoff) and the jam a group shares.
     api.state.playback_store = PlaybackStateStore(library_db)
     api.state.jam_store = JamStore(library_db)
+    # Errors from beta builds (downtify/beta_reports.py).
+    api.state.beta_reports = BetaReportStore(library_db)
     # The music trash (downtify/library_trash.py), when the operator
     # turned it on. A configuration that doesn't load stops the server:
     # carrying on would quietly bring permanent deletion back.
@@ -958,6 +962,7 @@ def build_app() -> FastAPI:
     app.include_router(doctor_ai_routes.mcp_router)
     app.include_router(navidrome_ratings_routes.router)
     app.include_router(acoustid_routes.router)
+    app.include_router(beta_routes.router)
     app.include_router(download_policy_routes.router)
     app.include_router(wanted_routes.router)
     app.include_router(backup_routes.router)
