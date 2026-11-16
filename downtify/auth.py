@@ -955,6 +955,10 @@ RULES: list[tuple[frozenset[str], re.Pattern[str], str]] = [
         (_m('POST'), r'^/api/auth/logout$', PUBLIC),
         (_m('POST'), r'^/api/auth/pair$', PUBLIC),
         (_m('POST'), r'^/api/auth/token$', PUBLIC),
+        # A beta build's error report: a crash during pairing is exactly what
+        # nobody sends by hand, so this is open (capped and rate-limited in
+        # downtify/beta_routes.py). Reading them is the admin's business.
+        (_m('POST'), r'^/api/beta/reports$', PUBLIC),
         # Any signed-in user: their own account, devices and pairing
         # (the routes check whose), and a WebSocket ticket.
         (_m('POST'), r'^/api/auth/ws-ticket$', CLIENT),
@@ -990,6 +994,7 @@ RULES: list[tuple[frozenset[str], re.Pattern[str], str]] = [
         (_ALL, r'^/api/auth/', ADMIN),
         (_ALL, r'^/api/server(/port)?$', ADMIN),
         (_ALL, r'^/api/settings', ADMIN),
+        (_ALL, r'^/api/beta/reports$', ADMIN),
         (_READ, r'^/api/fs/dirs$', ADMIN),
         (_ALL, r'^/api/cookies$', ADMIN),
         (_ALL, r'^/api/(slskd|navidrome|deemix)/test$', ADMIN),
