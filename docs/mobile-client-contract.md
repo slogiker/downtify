@@ -38,7 +38,7 @@ Build the address from the resolved host + `port`. Discovery is a convenience: a
   "require_sign_in": true,
   "capabilities": {
     "transcoding": { "available": true, "formats": ["aac", "mp3", "opus"], "bitrates": [96, 128, 160, 192, 256, 320] },
-    "signed_urls": true, "pairing": true, "password_sign_in": true, "podcasts": true, "discover": true, "lyrics": true, "library_sync": true, "playlist_editing": true, "playlist_delete": true
+    "signed_urls": true, "pairing": true, "password_sign_in": true, "podcasts": true, "discover": true, "lyrics": true, "library_sync": true, "playlist_editing": true, "playlist_delete": true, "playback_handoff": true, "jam": true
   }
 }
 ```
@@ -247,6 +247,57 @@ POST /api/activity/playback
 - `player` is any id stable for this install. The app shows up by its device name.
 
 Podcast episodes: `PUT /api/podcasts/episodes/{id}/playback` with `{ "position_seconds", "played" }` (see the API reference), roughly every 10 s while playing and on pause.
+
+## 9. Playback across devices (handoff and jam)
+
+Two related things, gated by `capabilities.playback_handoff` and `capabilities.jam`: what each of the account's devices played last (so a phone can pick the song up), and a shared session a group follows. Positions are **seconds**, and the queue is a list of track ids.
+
+**Report** (what this device plays) — send it with the same triggers as `POST /api/activity/playback`, plus whenever the queue changes:
+
+```http
+POST /api/v1/playback/state
+
+{ "track_id": "t7b2…", "position": 42.5, "playing": true, "queue": ["t7b2…", "t0c4…"] }
+```
+
+It never expires, unlike the Activity page's live view (90 s): it is what the handoff reads. Best effort, online only.
+
+**Handoff** — the account's *other* devices, newest first:
+
+```http
+GET /api/v1/playback/handoff
+
+{ "devices": [ { "device_id": "8uz4d35zjpn2", "device_name": "Pixel 8", "track_id": "t7b2…", "position": 161, "playing": false, "updated_at": 1789600669.5, "queue": ["t7b2…"] } ] }
+```
+
+- Only the account's own devices, and never the asking one: another account's playback is not visible here.
+- `updated_at` is a Unix timestamp with a fractional part, so an app can say "yesterday".
+
+**Jam** — one session per account at a time, joined by a six-letter code (no `0/O/1/I`):
+
+```http
+POST /api/v1/playback/jam                        → { "id", "code": "RPKMNT", "owner": true, "members": [...], "state": {...} }
+POST /api/v1/playback/jam/join  { "code": "RPKMNT" }
+GET  /api/v1/playback/jam                        → { "session": {...} | null }
+PUT  /api/v1/playback/jam/state { "track_id", "position", "playing", "queue", "revision" }
+DELETE /api/v1/playback/jam                      → { "ended": bool, "session": {...} | null }
+```
+
+- A member is a **device**: the same account on two phones counts twice, and `members[].me` marks the caller's own entry.
+- `state` is `{ track_id, queue, position, playing, revision, updated_by_device_id }`. `PUT` sends the `revision` the caller acted on; a stale one answers **409** with `{ "detail": { "error": "stale revision", "state": {…} } }` — apply that state and retry on its revision instead of overwriting.
+- Leave out `queue` on a seek or a pause: the stored queue is kept. Omitting `revision` writes unconditionally (a member sending its first state).
+- **The owner leaving ends the session for everyone**; another member leaving only removes that device.
+- `PUT` also records the publisher's `POST /api/v1/playback/state`, so the handoff stays true during a jam.
+
+WebSocket frames (see §7), to every member:
+
+| Message | When |
+|---------|------|
+| `{ "type": "jam_members", "session": {…} \| null }` | Someone started, joined or left (the state after the change; `null` when it ended) |
+| `{ "type": "jam_state", "session_id", "state": {…}, "by_device_id", "by_user_id" }` | A member published a new state |
+| `{ "type": "jam_ended", "session": null }` | The owner left, so the session is over |
+
+A member that has never reported a position shows in `members` but not in the handoff until it plays something.
 
 ## Error handling summary
 
