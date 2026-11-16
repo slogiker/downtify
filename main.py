@@ -1360,6 +1360,16 @@ def build_app() -> FastAPI:
         LibraryAudioFiles(directory=str(DOWNLOAD_DIR)),
         name='downloads',
     )
+    # Builds handed to testers: `GET /beta/<file>` from `/data/beta`. An APK cannot install
+    # itself from the chat it arrived in, so the server hands it out on its own address.
+    beta_dir = DATABASE_DIR / 'beta'
+    beta_dir.mkdir(parents=True, exist_ok=True)
+    mimetypes.add_type('application/vnd.android.package-archive', '.apk')
+    app.mount(
+        '/beta',
+        StaticFiles(directory=str(beta_dir)),
+        name='beta',
+    )
     app.mount(
         '/',
         SPAStaticFiles(directory=WEB_GUI_LOCATION, html=True),
