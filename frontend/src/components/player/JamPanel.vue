@@ -24,6 +24,24 @@
           {{ error }}
         </p>
 
+        <!-- Handoff: where another device stopped. Nothing to do with the
+             jam - this is "continue on the PC where the phone was". -->
+        <div v-if="jam.handoff.value.length" class="mb-4">
+          <p class="mb-2 text-xs uppercase tracking-widest text-white/40">Continue from</p>
+          <button
+            v-for="entry in jam.handoff.value"
+            :key="entry.device_id"
+            type="button"
+            class="mb-1 flex w-full items-center justify-between gap-3 rounded-lg bg-white/5 px-3 py-2 text-left text-sm hover:bg-white/10"
+            @click="jam.continueHere(entry)"
+          >
+            <span class="truncate">{{ entry.device_name || entry.device_id }}</span>
+            <span class="shrink-0 text-xs text-white/40">
+              {{ entry.track_id ? formatPosition(entry.position) : 'nothing yet' }}
+            </span>
+          </button>
+        </div>
+
         <!-- No room yet: start one, or type the six letters someone read out. -->
         <template v-if="!session">
           <p class="mb-4 text-sm text-white/60">
@@ -129,6 +147,11 @@ defineEmits(['close'])
 const jam = useJam()
 const player = usePlayer()
 const code = ref('')
+
+function formatPosition(seconds) {
+  const total = Math.max(0, Math.round(seconds || 0))
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
 
 const stateLine = computed(() => {
   const state = jam.session.value?.state

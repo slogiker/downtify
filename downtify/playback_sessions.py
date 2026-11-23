@@ -342,11 +342,25 @@ class JamStore:
                 (session_id, int(user_id), device_id or ''),
             )
             if is_owner:
+                # The room outlives its host: the longest-standing member
+                # takes over, so the others keep playing instead of being
+                # thrown out because one phone closed its app.
+                heir = conn.execute(
+                    'SELECT user_id, device_id FROM jam_members '
+                    'WHERE session_id = ? ORDER BY joined_at LIMIT 1',
+                    (session_id,),
+                ).fetchone()
+                if heir is None:
+                    conn.execute(
+                        'UPDATE jam_sessions SET closed_at = ? WHERE id = ?',
+                        (_now(), session_id),
+                    )
+                    return True
                 conn.execute(
-                    'UPDATE jam_sessions SET closed_at = ? WHERE id = ?',
-                    (_now(), session_id),
+                    'UPDATE jam_sessions SET owner_user_id = ?, '
+                    'owner_device_id = ? WHERE id = ?',
+                    (int(heir['user_id']), heir['device_id'], session_id),
                 )
-                return True
         return False
 
     def close(self, session_id: str) -> None:

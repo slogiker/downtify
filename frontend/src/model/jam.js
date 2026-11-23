@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { useLibrary } from '/src/model/library'
 import { usePlayer } from '/src/model/player'
 
 /**
@@ -19,6 +20,8 @@ const session = ref(null)
 const busy = ref(false)
 const error = ref('')
 const following = ref(true)
+//: What the account's other devices played last (the handoff).
+const handoff = ref([])
 
 let timer = null
 let appliedRevision = -1
@@ -56,6 +59,7 @@ function localQueue(player) {
 
 export function useJam() {
   const player = usePlayer()
+  const library = useLibrary()
 
   function snapshot() {
     return {
@@ -82,6 +86,33 @@ export function useJam() {
     if (drift > 1.0) player.seek(Math.max(0, expected))
     if (state.playing && !player.isPlaying.value) player.play()
     if (!state.playing && player.isPlaying.value) player.pause()
+  }
+
+  /** Where the other devices stopped - "continue on the PC where the phone was". */
+  async function loadHandoff() {
+    try {
+      const data = await request('GET', '/api/v1/playback/handoff')
+      handoff.value = data.devices ?? []
+    } catch {
+      handoff.value = []
+    }
+  }
+
+  /** Take over another device's track here, at its position. */
+  function continueHere(entry) {
+    const item = (library.tracks.value ?? []).find((t) => t.id === entry.track_id)
+    if (!item) {
+      error.value =
+        'That track is not on the library page this session loaded - open Library first, then try again.'
+      return false
+    }
+    error.value = ''
+    player.playList([item], { context: 'handoff' })
+    window.setTimeout(() => {
+      player.seek(entry.position || 0)
+      if (entry.playing) player.play()
+    }, 300)
+    return true
   }
 
   async function refresh() {
@@ -173,7 +204,7 @@ export function useJam() {
   async function open() {
     error.value = ''
     try {
-      await refresh()
+      await Promise.all([refresh(), loadHandoff()])
       if (session.value) startPolling()
     } catch (e) {
       error.value = e.message
@@ -182,6 +213,9 @@ export function useJam() {
 
   return {
     session,
+    handoff,
+    loadHandoff,
+    continueHere,
     busy,
     error,
     following,
