@@ -11,6 +11,7 @@ from discovery to reporting plays, is ``docs/mobile-client-contract.md``.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import mimetypes
 import time
 from pathlib import Path
@@ -983,7 +984,14 @@ def _playback_identity(request: Request) -> tuple[int, str, str]:
     user_id = api.request_user_id(request)
     if principal is None or not user_id:
         raise HTTPException(status_code=401, detail='Sign in required')
-    return user_id, principal.device_id or '', principal.username or ''
+    device_id = principal.device_id or ''
+    if not device_id:
+        # A browser session has no paired device. Give each browser its own
+        # stable id so two tabs running the web player are two participants
+        # instead of one row that keeps overwriting itself.
+        raw = '|'.join(sorted(f'{k}={v}' for k, v in request.cookies.items()))
+        device_id = 'web-' + hashlib.sha1(raw.encode()).hexdigest()[:12] if raw else 'web'
+    return user_id, device_id, principal.username or ''
 
 
 def _device_name(device_id: str) -> str:
@@ -1010,10 +1018,17 @@ def _jam_payload(
         }
         for member in jam.members(session['id'])
     ]
+    # `owner` is the device that started the jam: a second device of the same
+    # account is a guest and must not get the host's controls.
+    owner_device = str(session.get('owner_device_id') or '')
+    if owner_device:
+        is_owner = (device_id or '') == owner_device
+    else:
+        is_owner = int(session['owner_user_id']) == int(user_id)
     return {
         'id': session['id'],
         'code': session['code'],
-        'owner': int(session['owner_user_id']) == int(user_id),
+        'owner': is_owner,
         'created_at': session['created_at'],
         'members': members,
         'state': jam.state(session['id']),
@@ -1101,6 +1116,28 @@ async def start_jam(request: Request) -> dict[str, Any]:
     if current is not None:
         return _jam_payload(current, user_id, device_id, jam)
     session = await asyncio.to_thread(jam.create, user_id, device_id)
+    # A host that is already playing can hand the room its track and queue in
+    # the same call; without this the session starts empty and the first frame
+    # everyone receives is a blank one.
+    body: dict[str, Any] = {}
+    try:
+        body = await api._json_object(request)
+    except Exception:
+        body = {}
+    if isinstance(body.get('track_id'), str) and body.get('track_id'):
+        queue = body.get('queue') if isinstance(body.get('queue'), list) else None
+        state, _ = await asyncio.to_thread(
+            jam.publish,
+            session['id'],
+            user_id,
+            device_id,
+            track_id=body['track_id'],
+            position=float(body.get('position') or 0.0),
+            playing=bool(body.get('playing')),
+            queue=queue,
+            queue_supplied=queue is not None,
+        )
+        session = await asyncio.to_thread(jam.session, session['id']) or session
     payload = _jam_payload(session, user_id, device_id, jam)
     await _broadcast_jam(session, {'type': 'jam_members', 'session': payload})
     return payload

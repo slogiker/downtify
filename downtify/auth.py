@@ -1079,6 +1079,10 @@ RULES: list[tuple[frozenset[str], re.Pattern[str], str]] = [
         (_ALL, r'^/(delete|delete/batch)$', ADMIN),
         (_ALL, r'^/(docs|redoc|openapi\.json)', ADMIN),
         # Client: what a paired app does.
+        # The web player is a jam participant too: the browser is a signed-in
+        # user, not a paired device, and every v1 playback route still checks
+        # whose rows it touches.
+        (_ALL, r'^/api/v1/playback(/.*)?$', USER),
         (_ALL, r'^/api/v1/', CLIENT),
         (_ALL, r'^/api/ws$', CLIENT),
         (

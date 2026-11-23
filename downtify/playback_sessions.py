@@ -326,13 +326,22 @@ class JamStore:
         session = self.session(session_id)
         if session is None:
             return True
+        # Ownership is the *device* that started the jam, not the account: a
+        # second device of the same account is a guest, and its leaving must
+        # not close the room. Sessions created before the column existed have
+        # no owner device, so they fall back to the account.
+        owner_device = str(session.get('owner_device_id') or '')
+        if owner_device:
+            is_owner = (device_id or '') == owner_device
+        else:
+            is_owner = int(user_id) == int(session['owner_user_id'])
         with self._connect() as conn:
             conn.execute(
                 'DELETE FROM jam_members WHERE session_id = ? '
                 'AND user_id = ? AND device_id = ?',
                 (session_id, int(user_id), device_id or ''),
             )
-            if int(user_id) == session['owner_user_id']:
+            if is_owner:
                 conn.execute(
                     'UPDATE jam_sessions SET closed_at = ? WHERE id = ?',
                     (_now(), session_id),

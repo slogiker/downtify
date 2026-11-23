@@ -16,6 +16,7 @@
           :karaoke="isKaraoke"
           :playing="player.isPlaying.value"
         />
+        <JamPanel v-if="jamOpen" @close="jamOpen = false" />
 
         <div
           class="relative flex h-full flex-col px-5 lg:px-10"
@@ -107,6 +108,15 @@
               @click="openKaraokeWindow"
             >
               <AppIcon name="screen-share" :size="20" />
+            </button>
+            <button
+              type="button"
+              class="flex size-10 shrink-0 items-center justify-center rounded-full bg-white/10 text-[11px] font-bold tracking-wide transition-colors hover:bg-white/20"
+              aria-label="Jam"
+              title="Jam"
+              @click="jamOpen = true"
+            >
+              JAM
             </button>
             <div
               class="ml-auto hidden gap-1 rounded-[12px] p-1 lg:flex"
@@ -543,6 +553,7 @@ import TrackDetails from '../player/TrackDetails.vue'
 import NowPlayingTrackInfo from '../player/NowPlayingTrackInfo.vue'
 import EqualizerPanel from '../player/EqualizerPanel.vue'
 import KaraokeUpNext from '../player/KaraokeUpNext.vue'
+import JamPanel from '../player/JamPanel.vue'
 import NowPlayingBackdrop from '../player/NowPlayingBackdrop.vue'
 import { usePlayer } from '/src/model/player'
 import { useKaraokeStage } from '/src/model/karaokeStage'
@@ -557,6 +568,8 @@ import { useCoverPalette } from '/src/model/coverPalette'
 import { groupingArtistName } from '/src/lib/library'
 import { saveName } from '/src/lib/paths'
 import { useBuyLinks } from '/src/model/buyLinks'
+
+const jamOpen = ref(false)
 import { buyTargetForTrack } from '/src/lib/buyLinks'
 import { useI18n } from '/src/i18n'
 
